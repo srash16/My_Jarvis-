@@ -1,0 +1,16 @@
+Voice Enhancement Task Description (updated):
+
+Original goal: Enhance voice output with dynamic TTS control.
+Updated goal per user request: Replace manual "Press Enter" trigger with wake-word activation ("Hey Jarvis") while keeping voice output unchanged (no modifications to TTS voice/settings).
+
+Changes made:
+- Removed the `input("Press Enter to speak...")` loop.
+- Implemented continuous background listening for wake phrase "hey jarvis" (case-insensitive).
+- Upon wake detection, a beep plays and the system records a 5-second utterance, transcribes it, and processes the command.
+- Voice output (ElevenLabs/Edge TTS) remains exactly as in the original code; no additional parameters (rate, pitch, etc.) are exposed.
+- Fixed syntax error in `speak()` function (extra `down(text)` line).
+
+All other functionality (Gemini conversation, memory database, audio playback fallback) remains unchanged.
+
+Completed by: Assistant
+Date: 2026-07-03
