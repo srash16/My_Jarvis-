@@ -11,6 +11,12 @@ __pycache__/
 # Audio recordings
 *.wav
 
+# Memory stores
+chroma_data/
+
+# JARVIS screenshots
+.jarvis_screenshots/
+
 # OS files
 .DS_Store
 Thumbs.db

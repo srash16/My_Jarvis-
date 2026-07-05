@@ -1,0 +1,92 @@
+"""
+RAG configuration for JARVIS memory.
+
+Architecture: Hybrid conversational RAG
+  - Recent turns (sliding window) → Gemini `contents`
+  - Semantic retrieval (ChromaDB)   → Gemini `system_instruction`
+
+Tune via environment variables in `.env` or edit defaults below.
+"""
+
+import os
+from dataclasses import dataclass, field
+
+
+def _int(name: str, default: int) -> int:
+    return int(os.getenv(name, str(default)))
+
+
+@dataclass
+class RAGConfig:
+    # --- Vector database (ChromaDB) ---
+    chroma_path: str = field(default_factory=lambda: os.getenv("CHROMA_PATH", "chroma_data"))
+    collection_name: str = field(
+        default_factory=lambda: os.getenv("CHROMA_COLLECTION", "jarvis_conversations")
+    )
+    sqlite_path: str = field(default_factory=lambda: os.getenv("SQLITE_PATH", "jarvis_memory.db"))
+
+    # --- Embedding model ---
+    # Options: "default" | "minilm" | "minilm_l12"
+    # "default" / "minilm" → all-MiniLM-L6-v2 (384 dims, local ONNX, Chroma built-in)
+    # "minilm_l12"         → all-MiniLM-L12-v2 (384 dims, slightly heavier)
+    # Changing this after data exists requires a new collection (see memory.reset_collection).
+    embedding_model: str = field(
+        default_factory=lambda: os.getenv("RAG_EMBEDDING_MODEL", "default").lower()
+    )
+
+    # --- Chunking (turn-level, not text splitting) ---
+    # Each stored "chunk" = one full user + JARVIS exchange.
+    # Template placeholders: {user}, {jarvis}
+    chunk_template: str = field(
+        default_factory=lambda: os.getenv(
+            "RAG_CHUNK_TEMPLATE",
+            "User: {user}\nJARVIS: {jarvis}",
+        )
+    )
+
+    # --- Retrieval ---
+    semantic_top_k: int = field(default_factory=lambda: _int("RAG_SEMANTIC_TOP_K", 5))
+    recent_turns: int = field(default_factory=lambda: _int("RAG_RECENT_TURNS", 5))
+
+    # --- Augmentation (what Gemini sees) ---
+    jarvis_persona: str = field(
+        default_factory=lambda: os.getenv(
+            "JARVIS_PERSONA",
+            "You are JARVIS, a helpful and intelligent AI assistant. "
+            "Be concise, smart, and slightly witty — like Tony Stark's AI.",
+        )
+    )
+    memory_instruction: str = field(
+        default_factory=lambda: os.getenv(
+            "RAG_MEMORY_INSTRUCTION",
+            "Relevant memories from past sessions (use when helpful, don't mention "
+            "memory search unless asked):",
+        )
+    )
+    memory_line_template: str = field(
+        default_factory=lambda: os.getenv(
+            "RAG_MEMORY_LINE",
+            '- [{date}] User: "{user}" → JARVIS: "{jarvis}"',
+        )
+    )
+
+
+def get_embedding_function(model_key: str):
+    """Return a Chroma-compatible embedding function for the chosen preset."""
+    from chromadb.utils import embedding_functions
+
+    key = (model_key or "default").lower()
+    if key in ("default", "minilm"):
+        return embedding_functions.DefaultEmbeddingFunction()
+    if key == "minilm_l12":
+        return embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name="all-MiniLM-L12-v2"
+        )
+    raise ValueError(
+        f"Unknown RAG_EMBEDDING_MODEL={model_key!r}. "
+        "Use: default, minilm, or minilm_l12"
+    )
+
+
+# Singleton used by memory.py — import `config` or `RAGConfig()` after env is loaded.
+config = RAGConfig()

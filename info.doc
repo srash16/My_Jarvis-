@@ -1,8 +1,8 @@
-This command installs all the libraries needed to give your JARVIS ears and a voice:
+#This command installs all the libraries needed to give your JARVIS ears and a voice:
 
-pip install openai-whisper elevenlabs sounddevice soundfile numpy pyaudio
+#pip install openai-whisper elevenlabs sounddevice soundfile numpy pyaudio
 
-Let's break down each package.
+#Let's break down each package.
 
 1. openai-whisper
 pip install openai-whisper
@@ -141,3 +141,12 @@ and only install pyaudio if you specifically need it.
 The with ... as statement in Python is used to manage resources automatically.
 The idea is:
 Open something → use it → automatically clean it up when you're done.
+
+#RAG: retrival augmented generation:-
+RAG is a technology used to train anything to get better realtime outputs based on the pervious conversation 
+benifits of RAG : 1. reduce hellucination 2. always keep knowledge upto date 3.cost effective(keep it very easy to train the model) 4. Maintain the data privacy
+RAG have two main components used 
+1. injection pipeline
+  it is basically a process like:
+  PDFs, different data-> Extract data -> splite into chunks -> chunks of text( compressed text) ->  using embedding API -> convert to vectors -> store embedding into semantic indexs [chromaDB] (we basically store embeddings and doc chunks) -> this becomes our knowledge base
+2. retrival pipeline
