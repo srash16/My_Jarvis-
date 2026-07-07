@@ -135,6 +135,7 @@ def strip_markdown(text):
 
 
 def play_audio_bytes(audio_bytes):
+    """Play MP3/audio bytes through the default output device."""
     data, samplerate = sf.read(io.BytesIO(audio_bytes))
     sd.play(data, samplerate)
     sd.wait()
@@ -151,7 +152,8 @@ def speak_elevenlabs(text):
             if audio:
                 play_audio_bytes(audio)
                 return True
-        except Exception:
+        except Exception as e:
+            print(f"ElevenLabs TTS failed: {e}")
             continue
     return False
 
@@ -165,10 +167,13 @@ async def _edge_tts_generate(text):
 
 
 def speak_edge_tts(text):
-    audio = asyncio.run(_edge_tts_generate(text))
-    if audio:
-        play_audio_bytes(audio)
-        return True
+    try:
+        audio = asyncio.run(_edge_tts_generate(text))
+        if audio:
+            play_audio_bytes(audio)
+            return True
+    except Exception as e:
+        print(f"Edge TTS failed: {e}")
     return False
 
 
@@ -178,10 +183,15 @@ def speak(text, already_printed=False):
     spoken = strip_markdown(text)
     if not spoken:
         return
-    if speak_edge_tts(spoken):
-        return
-    print("(Edge TTS unavailable, trying ElevenLabs...)")
-    speak_elevenlabs(spoken)
+    try:
+        if speak_edge_tts(spoken):
+            return
+        print("(Edge TTS unavailable, trying ElevenLabs...)")
+        if speak_elevenlabs(spoken):
+            return
+        print("(Could not play audio — check speakers.)")
+    except Exception as e:
+        print(f"TTS error: {e}")
 
 
 def beep(frequency=1500, duration=0.15):

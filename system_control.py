@@ -223,6 +223,13 @@ def open_application(app_name: str) -> str:
     """
     key = app_name.lower().strip()
 
+    # Never run "google ..." as a Windows executable — use open_chrome / open_website instead
+    if key == "google" or key.startswith("google ") or "google classroom" in key:
+        return (
+            "Google apps open in the browser, not as desktop programs. "
+            "Try: 'open Google Classroom with work account'."
+        )
+
     if key in CUSTOM_APPS:
         try:
             _launch_path(CUSTOM_APPS[key])
