@@ -264,7 +264,10 @@ def process_command(text):
     conversation_history.append(make_content("user", text))
 
     try:
-        system_instruction = memory.build_system_instruction(text) + SYSTEM_CONTROL_PROMPT
+        system_instruction = memory.build_system_instruction(
+            text,
+            conversation_history=conversation_history,
+        ) + SYSTEM_CONTROL_PROMPT
         reply = generate_with_tools(client, conversation_history, system_instruction)
         deliver_reply(text, reply)
     except Exception as e:

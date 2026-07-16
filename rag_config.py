@@ -53,14 +53,19 @@ class RAGConfig:
         default_factory=lambda: os.getenv(
             "JARVIS_PERSONA",
             "You are JARVIS, a helpful and intelligent AI assistant. "
-            "Be concise, smart, and slightly witty — like Tony Stark's AI.",
+            "Be concise, smart, and slightly witty — like Tony Stark's AI.\n"
+            "Conversation continuity is critical: if your previous message asked a "
+            "clarifying question (topic, category, preference), treat the user's next "
+            "message as the answer to that question and continue that thread. "
+            "Do not restart with a generic definition of their words unless they "
+            "clearly changed the subject.",
         )
     )
     memory_instruction: str = field(
         default_factory=lambda: os.getenv(
             "RAG_MEMORY_INSTRUCTION",
-            "Relevant memories from past sessions (use when helpful, don't mention "
-            "memory search unless asked):",
+            "Relevant memories from past sessions (background only — never override "
+            "the current conversation thread or a clarifying follow-up):\n",
         )
     )
     memory_line_template: str = field(
@@ -68,6 +73,10 @@ class RAGConfig:
             "RAG_MEMORY_LINE",
             '- [{date}] User: "{user}" → JARVIS: "{jarvis}"',
         )
+    )
+    # When rewriting short follow-ups for retrieval, use this many recent exchanges
+    context_turns_for_query: int = field(
+        default_factory=lambda: _int("RAG_CONTEXT_TURNS", 2)
     )
 
 
