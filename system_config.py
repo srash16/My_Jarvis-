@@ -25,3 +25,15 @@ CHROME_NICKNAMES = _parse_pairs(os.getenv("JARVIS_CHROME_NICKNAMES", ""))
 
 # Seconds to wait before shutdown/restart after confirmation
 POWER_DELAY_SECONDS = int(os.getenv("JARVIS_POWER_DELAY", "30"))
+
+# Gmail accounts for sending emails: JARVIS_GMAIL_ACCOUNTS=email1=app_password1;email2=app_password2
+# Default account to use if not specified: JARVIS_GMAIL_DEFAULT=email1
+def _parse_gmail_accounts(raw: str) -> dict[str, str]:
+    """Parse 'email1=app_password1;email2=app_password2' into a dict."""
+    return _parse_pairs(raw)
+
+GMAIL_ACCOUNTS = _parse_gmail_accounts(os.getenv("JARVIS_GMAIL_ACCOUNTS", ""))
+GMAIL_DEFAULT = os.getenv("JARVIS_GMAIL_DEFAULT", "")
+
+# Gemini API key (falls back to GOOGLE_API_KEY used elsewhere in the project)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY", "")

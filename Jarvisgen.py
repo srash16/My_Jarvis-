@@ -21,6 +21,8 @@ from memory import JarvisMemory
 from jarvis_brain import generate_with_tools, friendly_error
 from local_commands import handle_locally
 from system_control import SYSTEM_CONTROL_PROMPT
+from system_config import GMAIL_ACCOUNTS, GMAIL_DEFAULT, GEMINI_API_KEY
+from agent_setup import run_smart_agent
 
 client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 elevenlabs = ElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY"))
@@ -256,11 +258,36 @@ def process_command(text):
         deliver_reply(text, local_result)
         return
 
+    # Check for exit keywords
     if any(word in text.lower() for word in ("goodbye", "quit", "exit", "bye", "stop")):
         speak("Going offline. Goodbye.")
         stop_listening = True
         return
 
+    # Check for intents that should be handled by the smart agent (weather, email, search)
+    text_lower = text.lower()
+    weather_keywords = ["weather", "forecast", "temperature", "rain", "sun", "cloud"]
+    email_keywords = ["email", "send mail", "send email", "mail"]
+    search_keywords = ["search", "look up", "google", "find", "search for"]
+
+    is_weather = any(word in text_lower for word in weather_keywords)
+    is_email = any(word in text_lower for word in email_keywords)
+    is_search = any(word in text_lower for word in search_keywords)
+
+    if is_weather or is_email or is_search:
+        print("[SmartAgent] Detected intent for weather/email/search")
+        try:
+            # Pass the current conversation history (without the current user message yet)
+            reply = run_smart_agent(text, conversation_history)
+            # Add the user message to history (deliver_reply will add the model message)
+            conversation_history.append(make_content("user", text))
+            deliver_reply(text, reply)
+        except Exception as e:
+            print(f"Error in smart agent: {e}")
+            speak(f"I encountered an error while processing your request: {str(e)}")
+        return
+
+    # If not handled by smart agent, fall back to the existing system-control path
     conversation_history.append(make_content("user", text))
 
     try:
