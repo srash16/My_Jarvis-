@@ -21,8 +21,9 @@ from memory import JarvisMemory
 from jarvis_brain import generate_with_tools, friendly_error
 from local_commands import handle_locally
 from system_control import SYSTEM_CONTROL_PROMPT
-from system_config import GMAIL_ACCOUNTS, GMAIL_DEFAULT, GEMINI_API_KEY
+from system_config import GMAIL_ACCOUNTS, GMAIL_DEFAULT, GEMINI_API_KEY, VISION_ENABLED
 from agent_setup import run_smart_agent
+from vision import CameraWatcher
 
 client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 elevenlabs = ElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY"))
@@ -242,6 +243,23 @@ def deliver_reply(user_text, reply):
     speak(reply, already_printed=True)
 
 
+def handle_vision_detection(description):
+    global is_processing
+    if is_processing or stop_listening:
+        return
+    is_processing = True
+    try:
+        print(f"[Vision] JARVIS sees: {description}")
+        speak(description)
+        threading.Thread(
+            target=memory.save,
+            args=("[camera detection]", description),
+            daemon=True,
+        ).start()
+    finally:
+        is_processing = False
+
+
 def process_command(text):
     global stop_listening, conversation_history, memory
 
@@ -381,6 +399,15 @@ def start_voice_interaction():
     listen_thread = threading.Thread(target=listen_for_wake_word, daemon=True)
     listen_thread.start()
 
+    # Camera watcher
+    if VISION_ENABLED:
+        camera_watcher = CameraWatcher(client, handle_vision_detection)
+        camera_watcher.start()
+        print("📷 Camera vision active")
+    else:
+        camera_watcher = None
+        print("📷 Camera vision disabled via .env")
+
     print("🗣️  Say 'Jarvis' then your command (pause briefly, then speak)")
     print("💡 Simple commands (open apps, volume) work even if API limit is hit")
     print("💡 Say 'goodbye' to stop")
@@ -392,6 +419,8 @@ def start_voice_interaction():
         print("\n👋 Shutting down...")
     finally:
         stop_listening = True
+        if camera_watcher is not None:
+            camera_watcher.stop()
         listen_thread.join(timeout=1.0)
 
 
