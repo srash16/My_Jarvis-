@@ -3,8 +3,11 @@ load_dotenv()
 
 import asyncio
 import io
+import json
 import os
 import re
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -180,12 +183,33 @@ def speak_edge_tts(text):
     return False
 
 
+SPEAKING_STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jarvis_speaking_state.json")
+LISTENING_STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jarvis_listening_state.json")
+
+
+def _set_speaking_state(speaking):
+    try:
+        with open(SPEAKING_STATE_PATH, "w", encoding="utf-8") as f:
+            json.dump({"speaking": bool(speaking)}, f)
+    except Exception:
+        pass
+
+
+def _set_listening_state(listening):
+    try:
+        with open(LISTENING_STATE_PATH, "w", encoding="utf-8") as f:
+            json.dump({"listening": bool(listening)}, f)
+    except Exception:
+        pass
+
+
 def speak(text, already_printed=False):
     if not already_printed:
         print(f"JARVIS: {text}\n")
     spoken = strip_markdown(text)
     if not spoken:
         return
+    _set_speaking_state(True)
     try:
         if speak_edge_tts(spoken):
             return
@@ -195,6 +219,8 @@ def speak(text, already_printed=False):
         print("(Could not play audio — check speakers.)")
     except Exception as e:
         print(f"TTS error: {e}")
+    finally:
+        _set_speaking_state(False)
 
 
 def beep(frequency=1500, duration=0.15):
@@ -225,6 +251,7 @@ def clean_command(text):
 def listen_for_command():
     """Record a fresh command after wake word beep."""
     audio = record_until_silence()
+    _set_listening_state(False)
     if len(audio) == 0:
         speak("I didn't catch that. Try again.")
         return
@@ -397,15 +424,18 @@ def listen_for_wake_word():
 
             print(f"🎯 Wake word detected! (heard: {transcript})")
             beep()
+            _set_listening_state(True)
             is_processing = True
             try:
                 inline = clean_command(transcript)
                 if inline and len(inline.split()) >= 2:
+                    _set_listening_state(False)
                     process_command(inline)
                 else:
                     listen_for_command()
             finally:
                 is_processing = False
+                _set_listening_state(False)
 
 
 def start_voice_interaction():
@@ -413,6 +443,8 @@ def start_voice_interaction():
 
     from security_checks import check_bitlocker_status
     check_bitlocker_status()
+
+    widget_process = _launch_widget()
 
     calibrate_mic()
     print("Loading memory (SQLite + ChromaDB)...")
@@ -449,6 +481,42 @@ def start_voice_interaction():
     finally:
         stop_listening = True
         listen_thread.join(timeout=1.0)
+        _set_speaking_state(False)
+        _set_listening_state(False)
+        if widget_process is not None:
+            try:
+                widget_process.terminate()
+            except Exception:
+                pass
+
+
+def _launch_widget():
+    """Launch the floating visualizer as a detached process. Never blocks/crashes startup."""
+    widget_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jarvis_widget.py")
+    if not os.path.exists(widget_path):
+        return None
+
+    _set_speaking_state(False)
+    _set_listening_state(False)
+
+    # Prefer pythonw.exe (no console window); fall back to current interpreter
+    py_dir = os.path.dirname(sys.executable)
+    pythonw = os.path.join(py_dir, "pythonw.exe")
+    interpreter = pythonw if os.path.exists(pythonw) else sys.executable
+
+    try:
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        proc = subprocess.Popen(
+            [interpreter, widget_path],
+            creationflags=creationflags,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        print("🌀 JARVIS visualizer widget launched")
+        return proc
+    except Exception as e:
+        print(f"(Visualizer widget not started: {e})")
+        return None
 
 
 if __name__ == "__main__":

@@ -20,6 +20,13 @@ jarvis_memory.db.pre_encrypt.bak
 # Tool-call audit log (may contain personal info from tool args)
 jarvis_audit.log
 
+# Visualizer widget runtime files
+jarvis_speaking_state.json
+jarvis_listening_state.json
+jarvis_speaking.flag
+widget_position.json
+.streamlit/
+
 # JARVIS screenshots
 .jarvis_screenshots/
 
