@@ -13,6 +13,12 @@ __pycache__/
 
 # Memory stores
 chroma_data/
+chroma_data.pre_encrypt.bak/
+jarvis_memory.db
+jarvis_memory.db.pre_encrypt.bak
+
+# Tool-call audit log (may contain personal info from tool args)
+jarvis_audit.log
 
 # JARVIS screenshots
 .jarvis_screenshots/

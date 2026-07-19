@@ -6,6 +6,7 @@ import time
 from google import genai
 from google.genai import types
 
+from audit_log import log_tool_call
 from system_control import SYSTEM_TOOLS, TOOL_EXECUTORS
 
 GEMINI_MODEL = __import__("os").getenv("GEMINI_MODEL", "gemini-2.5-flash")
@@ -96,6 +97,11 @@ def generate_with_tools(client: genai.Client, contents, system_instruction, max_
                     result = f"Tool error: {e}"
             else:
                 result = f"Unknown tool: {name}"
+
+            confirmed = args.get("confirmed") if isinstance(args, dict) else None
+            if confirmed is not None and not isinstance(confirmed, bool):
+                confirmed = bool(confirmed)
+            log_tool_call(name, args, result, confirmed=confirmed)
 
             preview = result[:120] + ("..." if len(result) > 120 else "")
             print(f"[System] -> {preview}")

@@ -1,4 +1,9 @@
-"""Long-term memory: SQLite (source of truth) + ChromaDB (semantic search)."""
+"""Long-term memory: SQLite (source of truth) + ChromaDB (semantic search).
+
+Conversation TEXT in SQLite and Chroma documents/metadata are Fernet-encrypted
+at rest using JARVIS_DB_KEY. Embeddings are computed from plaintext so RAG
+semantic search still works; only stored document strings are ciphertext.
+"""
 
 import re
 import sqlite3
@@ -6,6 +11,13 @@ from datetime import datetime
 
 import chromadb
 
+from memory_crypto import (
+    decrypt_text,
+    encrypt_text,
+    get_fernet,
+    is_encrypted_value,
+    require_db_key,
+)
 from rag_config import config, get_embedding_function
 
 
@@ -50,11 +62,14 @@ def _looks_like_short_followup(text: str) -> bool:
 class JarvisMemory:
     def __init__(self, rag_config=None):
         self.cfg = rag_config or config
+        require_db_key()
+        self._fernet = get_fernet()
+        self._embed_fn = get_embedding_function(self.cfg.embedding_model)
         self._init_sqlite()
         self.chroma = chromadb.PersistentClient(path=self.cfg.chroma_path)
         self.collection = self.chroma.get_or_create_collection(
             name=self.cfg.collection_name,
-            embedding_function=get_embedding_function(self.cfg.embedding_model),
+            embedding_function=self._embed_fn,
         )
         self._sync_sqlite_to_chroma()
 
@@ -72,10 +87,46 @@ class JarvisMemory:
             )
         """)
         conn.commit()
+
+        # Refuse to continue if legacy plaintext rows are present
+        row = conn.execute(
+            "SELECT user_text, jarvis_response FROM conversations LIMIT 1"
+        ).fetchone()
         conn.close()
+        if row and (not is_encrypted_value(row[0]) or not is_encrypted_value(row[1])):
+            print(
+                "\n[Memory] Unencrypted conversation data found in jarvis_memory.db.\n"
+                "         Run once:  python migrate_encrypt_existing_data.py\n"
+                "         Then restart JARVIS.\n"
+            )
+            raise SystemExit(1)
 
     def _doc_text(self, user_text, jarvis_response):
+        """Plaintext chunk used for embedding / display (never store this raw in Chroma)."""
         return self.cfg.chunk_template.format(user=user_text, jarvis=jarvis_response)
+
+    def _encrypt_doc_and_meta(self, user_text: str, jarvis_response: str, ts: str):
+        """Encrypt document + sensitive metadata; return (enc_doc, enc_meta, embedding)."""
+        plain_doc = self._doc_text(user_text, jarvis_response)
+        embedding = self._embed_fn([plain_doc])[0]
+        enc_doc = encrypt_text(plain_doc, self._fernet)
+        enc_meta = {
+            "timestamp": ts,
+            "user_text": encrypt_text(user_text, self._fernet),
+            "jarvis_response": encrypt_text(jarvis_response, self._fernet),
+        }
+        return enc_doc, enc_meta, embedding
+
+    def _decrypt_meta(self, meta: dict) -> dict:
+        if not meta:
+            return {"timestamp": "", "user_text": "", "jarvis_response": ""}
+        return {
+            "timestamp": meta.get("timestamp", ""),
+            "user_text": decrypt_text(meta.get("user_text", "") or "", self._fernet),
+            "jarvis_response": decrypt_text(
+                meta.get("jarvis_response", "") or "", self._fernet
+            ),
+        }
 
     def _sync_sqlite_to_chroma(self):
         conn = self._connect()
@@ -91,42 +142,52 @@ class JarvisMemory:
         if self.collection.count() > 0:
             existing = set(self.collection.get(include=[])["ids"])
 
-        ids, docs, metas = [], [], []
-        for row_id, ts, user_text, jarvis_response in rows:
+        ids, docs, metas, embeddings = [], [], [], []
+        for row_id, ts, enc_user, enc_jarvis in rows:
             doc_id = str(row_id)
             if doc_id in existing:
                 continue
+            user_text = decrypt_text(enc_user, self._fernet)
+            jarvis_response = decrypt_text(enc_jarvis, self._fernet)
+            enc_doc, enc_meta, embedding = self._encrypt_doc_and_meta(
+                user_text, jarvis_response, ts
+            )
             ids.append(doc_id)
-            docs.append(self._doc_text(user_text, jarvis_response))
-            metas.append({
-                "timestamp": ts,
-                "user_text": user_text,
-                "jarvis_response": jarvis_response,
-            })
+            docs.append(enc_doc)
+            metas.append(enc_meta)
+            embeddings.append(embedding)
 
         if ids:
-            self.collection.add(ids=ids, documents=docs, metadatas=metas)
+            self.collection.add(
+                ids=ids,
+                documents=docs,
+                metadatas=metas,
+                embeddings=embeddings,
+            )
             print(f"[Memory] Synced {len(ids)} past conversation(s) into ChromaDB")
 
     def save(self, user_text, jarvis_response):
         ts = datetime.now().isoformat()
+        enc_user = encrypt_text(user_text, self._fernet)
+        enc_jarvis = encrypt_text(jarvis_response, self._fernet)
+
         conn = self._connect()
         cur = conn.execute(
             "INSERT INTO conversations (timestamp, user_text, jarvis_response) VALUES (?, ?, ?)",
-            (ts, user_text, jarvis_response),
+            (ts, enc_user, enc_jarvis),
         )
         row_id = cur.lastrowid
         conn.commit()
         conn.close()
 
+        enc_doc, enc_meta, embedding = self._encrypt_doc_and_meta(
+            user_text, jarvis_response, ts
+        )
         self.collection.add(
             ids=[str(row_id)],
-            documents=[self._doc_text(user_text, jarvis_response)],
-            metadatas=[{
-                "timestamp": ts,
-                "user_text": user_text,
-                "jarvis_response": jarvis_response,
-            }],
+            documents=[enc_doc],
+            metadatas=[enc_meta],
+            embeddings=[embedding],
         )
         return row_id
 
@@ -138,14 +199,19 @@ class JarvisMemory:
             (limit,),
         ).fetchall()
         conn.close()
-        return [{"user": row[0], "jarvis": row[1]} for row in reversed(rows)]
+        out = []
+        for enc_user, enc_jarvis in reversed(rows):
+            out.append({
+                "user": decrypt_text(enc_user, self._fernet),
+                "jarvis": decrypt_text(enc_jarvis, self._fernet),
+            })
+        return out
 
     def build_retrieval_query(self, current_query: str, conversation_history=None) -> str:
         """Rewrite short follow-ups using recent dialogue so RAG matches the open thread."""
         current = (current_query or "").strip()
         history = conversation_history or []
 
-        # Parse recent user/model texts from live history (excluding the just-appended current user turn)
         turns = []
         for item in history:
             role = item.get("role") if isinstance(item, dict) else None
@@ -153,7 +219,6 @@ class JarvisMemory:
             if role and text:
                 turns.append((role, text))
 
-        # Drop the trailing user turn if it matches current_query (already appended in process_command)
         if turns and turns[-1][0] == "user" and turns[-1][1].strip().lower() == current.lower():
             turns = turns[:-1]
 
@@ -172,8 +237,6 @@ class JarvisMemory:
         followup = _looks_like_short_followup(current)
 
         if clarifying and followup and last_user:
-            # e.g. user asked news → JARVIS asked topic → user said Hollywood
-            # retrieval should target "news update hollywood", not "hollywoodlywood definition"
             rewritten = (
                 f"Continuing prior request. Earlier user ask: {last_user}. "
                 f"User follow-up answer: {current}. "
@@ -195,14 +258,15 @@ class JarvisMemory:
         if self.collection.count() == 0:
             return []
 
-        # Fetch extra then filter duplicates against live conversation
         fetch = min(n_results + 4, self.collection.count())
-        results = self.collection.query(query_texts=[query], n_results=fetch)
+        # Query by embedding of plaintext query (documents in store are ciphertext)
+        query_emb = self._embed_fn([query])[0]
+        results = self.collection.query(query_embeddings=[query_emb], n_results=fetch)
 
         exclude = {t.strip().lower() for t in (exclude_texts or []) if t and t.strip()}
         memories = []
         for i, doc_id in enumerate(results["ids"][0]):
-            meta = results["metadatas"][0][i]
+            meta = self._decrypt_meta(results["metadatas"][0][i])
             user = meta.get("user_text", "")
             jarvis = meta.get("jarvis_response", "")
             if user.strip().lower() in exclude or jarvis.strip().lower() in exclude:
@@ -225,7 +289,6 @@ class JarvisMemory:
         base = self.cfg.jarvis_persona
         history = conversation_history or []
 
-        # Live-history texts to avoid re-injecting via RAG
         exclude = []
         for item in history[-12:]:
             text = _part_text(item)
@@ -235,11 +298,9 @@ class JarvisMemory:
         retrieval_query = self.build_retrieval_query(query, history)
         memories = self.search_relevant(retrieval_query, exclude_texts=exclude)
 
-        # Extra follow-up nudge when last JARVIS turn was a clarifying question
         followup_note = ""
         turns = [(item.get("role"), _part_text(item)) for item in history if isinstance(item, dict)]
         if turns and turns[-1][0] == "user":
-            # previous model message is second-to-last content before current user
             for role, text in reversed(turns[:-1]):
                 if role == "model" and text:
                     if _looks_like_clarifying_question(text):

@@ -18,4 +18,7 @@ langchain-google-genai
 langchain-core
 ddgs
 requests
-opencv-python
+opencv-python>=4.8,<5
+cryptography
+# SQLCipher (pysqlcipher3 / sqlcipher3-binary) does not install on Windows+Py3.13;
+# memory uses Fernet (cryptography) for at-rest encryption instead.

@@ -171,17 +171,29 @@ def list_chrome_profiles() -> str:
     return "\n".join(lines)
 
 
-def open_chrome(email: str, url: str = "") -> str:
+def open_chrome(email: str, url: str = "", confirmed: bool = False) -> str:
     """Open Google Chrome with a specific Google account profile.
+
+    Opening a URL in a profile REQUIRES confirmed=True after the user verbally confirms.
+    Switching profile with no URL does not require confirmation.
 
     Args:
         email: Google account email, partial email, profile name, or nickname
             from JARVIS_CHROME_NICKNAMES (e.g. "work", "mmcoe.edu.in").
         url: Optional website to open in that profile.
+        confirmed: Must be True when opening a non-empty URL after verbal confirmation.
 
     Returns:
         A short status message.
     """
+    target_url = (url or "").strip()
+    if target_url:
+        msg = _require_confirmation("open Chrome profile URL", target_url, confirmed)
+        if msg:
+            return msg
+        if not target_url.startswith(("http://", "https://")):
+            target_url = f"https://{target_url}"
+
     profile = _match_chrome_profile(email)
     if not profile:
         return (
@@ -192,10 +204,6 @@ def open_chrome(email: str, url: str = "") -> str:
     chrome_exe = _find_chrome_exe()
     if not chrome_exe:
         return "Google Chrome executable not found on this PC."
-
-    target_url = url.strip()
-    if target_url and not target_url.startswith(("http://", "https://")):
-        target_url = f"https://{target_url}"
 
     args = [str(chrome_exe), f'--profile-directory={profile["profile_id"]}']
     if target_url:
@@ -259,6 +267,7 @@ def open_website(url: str) -> str:
         target = f"https://{target}"
     try:
         webbrowser.open(target)
+        print(f"[System] open_website → {target}")
         return f"Opened {target} in your browser."
     except Exception as e:
         return f"Could not open website: {e}"
@@ -586,18 +595,26 @@ def cancel_shutdown() -> str:
         return f"Could not cancel shutdown: {e}"
 
 
-def type_text(text: str) -> str:
+def type_text(text: str, confirmed: bool = False) -> str:
     """Type text at the current cursor position using the keyboard.
+
+    REQUIRES confirmed=True after the user verbally confirms, since this can
+    type into any focused window.
 
     Args:
         text: Text to type into the active window.
+        confirmed: Must be True only after explicit user confirmation.
 
     Returns:
         A short status message.
     """
+    preview = text[:60] + ("..." if len(text) > 60 else "")
+    msg = _require_confirmation("type text", preview, confirmed)
+    if msg:
+        return msg
     try:
         pyautogui.write(text, interval=0.02)
-        return f'Typed "{text[:60]}{"..." if len(text) > 60 else ""}".'
+        return f'Typed "{preview}".'
     except Exception as e:
         return f"Could not type text: {e}"
 
@@ -620,17 +637,24 @@ def press_hotkey(*keys: str) -> str:
         return f"Could not press hotkey: {e}"
 
 
-def click_screen(x: int, y: int, button: str = "left") -> str:
+def click_screen(x: int, y: int, button: str = "left", confirmed: bool = False) -> str:
     """Click at a specific screen coordinate.
+
+    REQUIRES confirmed=True after the user verbally confirms, since this can
+    interact with anything on screen.
 
     Args:
         x: Horizontal pixel position from the left edge of the screen.
         y: Vertical pixel position from the top edge of the screen.
         button: Mouse button: left, right, or middle.
+        confirmed: Must be True only after explicit user confirmation.
 
     Returns:
         A short status message.
     """
+    msg = _require_confirmation("click screen", f"{button} at ({x}, {y})", confirmed)
+    if msg:
+        return msg
     try:
         pyautogui.click(x=x, y=y, button=button)
         return f"Clicked {button} button at ({x}, {y})."
@@ -709,11 +733,14 @@ SYSTEM_CONTROL_PROMPT = (
     "\n\nYou control the user's Windows PC via tools. Use tools for actions; "
     "answer normally for questions.\n"
     "Chrome with a specific account: open_chrome(email=...) — supports nicknames "
-    "from .env (e.g. 'work'). Use list_chrome_profiles to see accounts.\n"
+    "from .env (e.g. 'work'). Use list_chrome_profiles to see accounts. "
+    "open_chrome with a URL REQUIRES confirmed=True after verbal confirmation; "
+    "opening a profile with no URL does not.\n"
     "Screen vision: see_screen(question=...) to analyze what's on screen.\n"
     "Volume/brightness: set_volume, mute_volume, set_brightness, get_volume.\n"
     "Power: lock_computer, sleep_computer, shutdown_computer(restart=True/False).\n"
-    "DESTRUCTIVE actions (delete_file, move_file overwrite, shutdown/restart) "
+    "GATED actions (delete_file, move_file overwrite, shutdown/restart, "
+    "click_screen, type_text, open_chrome with a URL) "
     "REQUIRE confirmed=True ONLY after the user explicitly says yes/confirm. "
     "First call with confirmed=False to ask; second call with confirmed=True to execute.\n"
     "cancel_shutdown aborts a pending shutdown."

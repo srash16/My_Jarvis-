@@ -39,4 +39,5 @@ GMAIL_DEFAULT = os.getenv("JARVIS_GMAIL_DEFAULT", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY", "")
 
 # Vision system: set to false to disable webcam-based object/action detection
+# On-demand camera vision (voice-triggered capture only; no always-on watcher)
 VISION_ENABLED = os.getenv("JARVIS_VISION_ENABLED", "true").lower() == "true"

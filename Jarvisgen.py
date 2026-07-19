@@ -23,7 +23,7 @@ from local_commands import handle_locally
 from system_control import SYSTEM_CONTROL_PROMPT
 from system_config import GMAIL_ACCOUNTS, GMAIL_DEFAULT, GEMINI_API_KEY, VISION_ENABLED
 from agent_setup import run_smart_agent
-from vision import CameraWatcher
+from vision import capture_and_describe_once
 
 client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 elevenlabs = ElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY"))
@@ -243,7 +243,25 @@ def deliver_reply(user_text, reply):
     speak(reply, already_printed=True)
 
 
+def is_vision_request(text: str) -> bool:
+    """True when the user is asking JARVIS to look at something via the camera."""
+    t = text.lower().strip()
+    phrases = (
+        "what's this", "whats this", "what is this",
+        "what am i holding", "what i'm holding", "what i am holding",
+        "what am i doing", "what i'm doing", "what i am doing",
+        "what am i up to", "describe what i'm doing", "describe what i am doing",
+        "look at this", "look at that", "look at what", "look at me",
+        "what do you see", "what can you see",
+        "what is this object", "what's this object", "whats this object",
+        "identify this", "describe this", "describe what i'm holding",
+        "what am i showing", "take a look", "watch me",
+    )
+    return any(p in t for p in phrases)
+
+
 def handle_vision_detection(description):
+    """Legacy callback for optional CameraWatcher — not used on startup."""
     global is_processing
     if is_processing or stop_listening:
         return
@@ -282,6 +300,19 @@ def process_command(text):
         stop_listening = True
         return
 
+    # On-demand camera vision (wake-word command only — camera opens for this call alone)
+    if VISION_ENABLED and is_vision_request(text):
+        print("[Vision] On-demand capture (camera opens briefly, faces blurred before upload)")
+        speak("One moment — looking now.")
+        conversation_history.append(make_content("user", text))
+        try:
+            description = capture_and_describe_once(client)
+            deliver_reply(text, description)
+        except Exception as e:
+            print(f"Error in on-demand vision: {e}")
+            speak("I couldn't use the camera just now. Please try again.")
+        return
+
     # Check for intents that should be handled by the smart agent (weather, email, search)
     text_lower = text.lower()
     weather_keywords = ["weather", "forecast", "temperature", "rain", "sun", "cloud"]
@@ -295,9 +326,7 @@ def process_command(text):
     if is_weather or is_email or is_search:
         print("[SmartAgent] Detected intent for weather/email/search")
         try:
-            # Pass the current conversation history (without the current user message yet)
             reply = run_smart_agent(text, conversation_history)
-            # Add the user message to history (deliver_reply will add the model message)
             conversation_history.append(make_content("user", text))
             deliver_reply(text, reply)
         except Exception as e:
@@ -382,6 +411,9 @@ def listen_for_wake_word():
 def start_voice_interaction():
     global stop_listening, conversation_history, memory
 
+    from security_checks import check_bitlocker_status
+    check_bitlocker_status()
+
     calibrate_mic()
     print("Loading memory (SQLite + ChromaDB)...")
     memory = JarvisMemory()
@@ -399,13 +431,10 @@ def start_voice_interaction():
     listen_thread = threading.Thread(target=listen_for_wake_word, daemon=True)
     listen_thread.start()
 
-    # Camera watcher
+    # Camera is on-demand only (capture_and_describe_once). No always-on watcher.
     if VISION_ENABLED:
-        camera_watcher = CameraWatcher(client, handle_vision_detection)
-        camera_watcher.start()
-        print("📷 Camera vision active")
+        print("📷 Camera vision ready (on-demand — say 'Jarvis, what's this?')")
     else:
-        camera_watcher = None
         print("📷 Camera vision disabled via .env")
 
     print("🗣️  Say 'Jarvis' then your command (pause briefly, then speak)")
@@ -419,8 +448,6 @@ def start_voice_interaction():
         print("\n👋 Shutting down...")
     finally:
         stop_listening = True
-        if camera_watcher is not None:
-            camera_watcher.stop()
         listen_thread.join(timeout=1.0)
 
 
