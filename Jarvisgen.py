@@ -39,6 +39,9 @@ ELEVENLABS_VOICE_IDS = [
     ] if v
 ]
 EDGE_TTS_VOICE = "en-GB-RyanNeural"
+# Optional: force output device index or name substring, e.g. JARVIS_OUTPUT_DEVICE=Realtek
+# If unset, prefers local Realtek speakers/headphones over TVs/HDMI.
+OUTPUT_DEVICE_PREF = (os.getenv("JARVIS_OUTPUT_DEVICE") or "").strip()
 
 SAMPLE_RATE = 16000
 CHUNK_DURATION = 0.1
@@ -140,11 +143,97 @@ def strip_markdown(text):
     return re.sub(r"\n+", " ", text).strip()
 
 
+def _resolve_output_device():
+    """Pick a local speaker/headphones device; avoid TVs/HDMI when possible."""
+    try:
+        devices = sd.query_devices()
+    except Exception:
+        return None
+
+    def name_of(i):
+        try:
+            return str(devices[i]["name"])
+        except Exception:
+            return ""
+
+    # Explicit override from .env (index or name substring)
+    if OUTPUT_DEVICE_PREF:
+        if OUTPUT_DEVICE_PREF.isdigit():
+            idx = int(OUTPUT_DEVICE_PREF)
+            if 0 <= idx < len(devices) and devices[idx]["max_output_channels"] > 0:
+                return idx
+        needle = OUTPUT_DEVICE_PREF.lower()
+        for i, d in enumerate(devices):
+            if d["max_output_channels"] > 0 and needle in d["name"].lower():
+                return i
+
+    avoid = ("tv", "hdmi", "mapper", "primary sound", "nvidia", "amd high definition")
+    prefer = ("realtek", "headphones", "headset", "speaker")
+
+    candidates = [
+        i for i, d in enumerate(devices)
+        if d["max_output_channels"] > 0
+        and not any(a in d["name"].lower() for a in avoid)
+    ]
+    for keyword in prefer:
+        for i in candidates:
+            if keyword in name_of(i).lower():
+                return i
+    if candidates:
+        return candidates[0]
+
+    # Last resort: PortAudio default output
+    try:
+        return sd.default.device[1]
+    except Exception:
+        return None
+
+
+_OUTPUT_DEVICE = None  # resolved lazily once
+
+
+def _get_output_device():
+    global _OUTPUT_DEVICE
+    if _OUTPUT_DEVICE is None:
+        _OUTPUT_DEVICE = _resolve_output_device()
+        try:
+            name = sd.query_devices(_OUTPUT_DEVICE)["name"] if _OUTPUT_DEVICE is not None else "system default"
+        except Exception:
+            name = str(_OUTPUT_DEVICE)
+        print(f"🔊 Audio output: {name}")
+    return _OUTPUT_DEVICE
+
+
 def play_audio_bytes(audio_bytes):
-    """Play MP3/audio bytes through the default output device."""
+    """Play MP3/audio bytes through a local speaker (not TV/HDMI when avoidable)."""
     data, samplerate = sf.read(io.BytesIO(audio_bytes))
-    sd.play(data, samplerate)
-    sd.wait()
+    if getattr(data, "ndim", 1) > 1:
+        data = data.mean(axis=1)
+    data = np.asarray(data, dtype=np.float32)
+
+    device = _get_output_device()
+    try:
+        sd.play(data, samplerate, device=device, blocking=True)
+        return
+    except Exception as e:
+        print(f"(sounddevice play failed: {e}; trying Windows fallback)")
+
+    # Windows fallback — works even while the mic InputStream is open
+    path = None
+    try:
+        import winsound
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            path = tmp.name
+        sf.write(path, data, samplerate)
+        winsound.PlaySound(path, winsound.SND_FILENAME)
+    except Exception as e:
+        print(f"(audio fallback failed: {e})")
+    finally:
+        if path:
+            try:
+                os.unlink(path)
+            except Exception:
+                pass
 
 
 def speak_elevenlabs(text):
@@ -225,11 +314,19 @@ def speak(text, already_printed=False):
 
 def beep(frequency=1500, duration=0.15):
     def _play():
+        try:
+            import winsound
+            winsound.Beep(int(frequency), int(duration * 1000))
+            return
+        except Exception:
+            pass
         fs = 44100
         t = np.linspace(0, duration, int(fs * duration), False)
         note = np.sin(frequency * 2 * np.pi * t) * 0.3
-        sd.play(note.astype(np.float32), fs)
-        sd.wait()
+        try:
+            sd.play(note.astype(np.float32), fs, device=_get_output_device(), blocking=True)
+        except Exception:
+            pass
     threading.Thread(target=_play, daemon=True).start()
 
 
@@ -445,6 +542,7 @@ def start_voice_interaction():
     check_bitlocker_status()
 
     widget_process = _launch_widget()
+    _get_output_device()  # print chosen speaker once at startup
 
     calibrate_mic()
     print("Loading memory (SQLite + ChromaDB)...")

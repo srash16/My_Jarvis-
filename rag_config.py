@@ -45,8 +45,11 @@ class RAGConfig:
     )
 
     # --- Retrieval ---
-    semantic_top_k: int = field(default_factory=lambda: _int("RAG_SEMANTIC_TOP_K", 5))
-    recent_turns: int = field(default_factory=lambda: _int("RAG_RECENT_TURNS", 5))
+    # Lean defaults (3/3) cut tokens per Gemini call vs older 5/5 — helps avoid
+    # TPM stacking with RPD. Does NOT reduce request count. Override via .env if
+    # context recall feels thinner: RAG_SEMANTIC_TOP_K=5 and RAG_RECENT_TURNS=5.
+    semantic_top_k: int = field(default_factory=lambda: _int("RAG_SEMANTIC_TOP_K", 3))
+    recent_turns: int = field(default_factory=lambda: _int("RAG_RECENT_TURNS", 3))
 
     # --- Augmentation (what Gemini sees) ---
     jarvis_persona: str = field(

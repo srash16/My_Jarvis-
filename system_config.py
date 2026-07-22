@@ -41,3 +41,8 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY", "")
 # Vision system: set to false to disable webcam-based object/action detection
 # On-demand camera vision (voice-triggered capture only; no always-on watcher)
 VISION_ENABLED = os.getenv("JARVIS_VISION_ENABLED", "true").lower() == "true"
+
+# Main chat / tools stay on GEMINI_MODEL (jarvis_brain). Vision uses Flash-Lite
+# so those calls draw from a separate free-tier quota bucket.
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_LITE_MODEL = os.getenv("GEMINI_LITE_MODEL", "gemini-2.5-flash-lite")

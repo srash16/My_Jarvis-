@@ -16,6 +16,8 @@ import cv2
 import numpy as np
 from google.genai import types
 
+from system_config import GEMINI_LITE_MODEL
+
 # ---- Tunables ----
 MOTION_THRESHOLD = 25
 MOTION_AREA_PERCENT = 2.0
@@ -116,7 +118,7 @@ def capture_and_describe_once(client, prompt: str | None = None, camera_index: i
 
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=GEMINI_LITE_MODEL,
             contents=[
                 types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
                 use_prompt,
@@ -280,7 +282,7 @@ class CameraWatcher:
             image_bytes = buf.tobytes()
 
             response = self.client.models.generate_content(
-                model="gemini-2.5-flash",
+                model=GEMINI_LITE_MODEL,
                 contents=[
                     types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
                     VISION_PROMPT,

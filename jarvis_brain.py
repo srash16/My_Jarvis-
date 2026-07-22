@@ -11,6 +11,8 @@ from system_control import SYSTEM_TOOLS, TOOL_EXECUTORS
 
 GEMINI_MODEL = __import__("os").getenv("GEMINI_MODEL", "gemini-2.5-flash")
 MAX_RETRIES = 3
+_quota_hits_today = 0
+_quota_day = None
 
 
 def _safe_response_text(response) -> str:
@@ -116,8 +118,16 @@ def generate_with_tools(client: genai.Client, contents, system_instruction, max_
 
 
 def friendly_error(error: Exception) -> str:
+    global _quota_hits_today, _quota_day
     if _is_quota_error(error):
+        from datetime import date
+        today = date.today().isoformat()
+        if _quota_day != today:
+            _quota_day = today
+            _quota_hits_today = 0
+        _quota_hits_today += 1
         wait = int(_parse_retry_seconds(error))
+        print(f"[Quota] 429 error #{_quota_hits_today} today, retry in {wait}s")
         return (
             f"My Gemini API free tier limit is reached. "
             f"Wait about {wait} seconds and try again, or upgrade at ai.google.dev. "

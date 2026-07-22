@@ -1,6 +1,7 @@
 """Handle common commands locally — no Gemini API call needed."""
 
 import re
+from datetime import datetime
 
 from system_config import CHROME_NICKNAMES
 from system_control import TOOL_EXECUTORS
@@ -35,6 +36,23 @@ KNOWN_APPS = {
     "chrome", "notepad", "calculator", "calc", "vscode", "cursor", "spotify",
     "explorer", "file explorer", "terminal", "settings", "discord", "paint",
     "word", "excel", "teams", "firefox", "edge", "cmd", "powershell",
+}
+
+JARVIS_INTRO = (
+    "I'm JARVIS — your personal voice assistant. "
+    "I can open apps, control your PC, answer questions, and look at the camera when you ask."
+)
+
+_OPS = {
+    "plus": "+",
+    "add": "+",
+    "minus": "-",
+    "subtract": "-",
+    "times": "*",
+    "multiplied by": "*",
+    "x": "*",
+    "divided by": "/",
+    "over": "/",
 }
 
 
@@ -89,12 +107,89 @@ def _try_google(text: str) -> str | None:
     return None
 
 
+def _try_time_date_identity(t: str) -> str | None:
+    """Deterministic answers that must never hit Gemini."""
+    if re.search(
+        r"\b(?:what(?:'s| is|s)?(?: the)? time|what time is it|tell me the time)\b",
+        t,
+    ):
+        return f"It's {datetime.now().strftime('%I:%M %p').lstrip('0')}."
+
+    if re.search(
+        r"\b(?:what(?:'s| is|s)?(?: the)? date|what day is it|what(?:'s| is) today(?:'s date)?)\b",
+        t,
+    ):
+        return f"Today is {datetime.now().strftime('%A, %B %d, %Y')}."
+
+    if re.search(
+        r"\b(?:what(?:'s| is|s)? your name|who are you|introduce yourself)\b",
+        t,
+    ):
+        return JARVIS_INTRO
+
+    return None
+
+
+def _try_simple_math(t: str) -> str | None:
+    """Two-number arithmetic only — clean regex, no expression parsing."""
+    m = re.search(
+        r"(?:what(?:'s| is)|calculate|compute)\s+"
+        r"(-?\d+(?:\.\d+)?)\s+"
+        r"(plus|minus|times|multiplied by|divided by|add|subtract|x|over)\s+"
+        r"(-?\d+(?:\.\d+)?)\s*\??$",
+        t,
+    )
+    if not m:
+        m = re.search(
+            r"^(-?\d+(?:\.\d+)?)\s+"
+            r"(plus|minus|times|multiplied by|divided by|x|over)\s+"
+            r"(-?\d+(?:\.\d+)?)\s*\??$",
+            t,
+        )
+    if not m:
+        return None
+
+    a = float(m.group(1))
+    op_word = m.group(2)
+    b = float(m.group(3))
+    op = _OPS.get(op_word)
+    if not op:
+        return None
+    try:
+        if op == "+":
+            result = a + b
+        elif op == "-":
+            result = a - b
+        elif op == "*":
+            result = a * b
+        elif op == "/":
+            if b == 0:
+                return "I can't divide by zero."
+            result = a / b
+        else:
+            return None
+    except Exception:
+        return None
+
+    if float(result).is_integer():
+        return f"{int(result)}"
+    return f"{result:.4g}"
+
+
 def _try_local(text: str) -> str | None:
     t = text.lower().strip()
     t = re.sub(r"^[,.\!\?\s]+", "", t)
 
     if any(w in t for w in ("goodbye", "quit", "exit", "bye", "stop")):
         return "__EXIT__"
+
+    quick = _try_time_date_identity(t)
+    if quick:
+        return quick
+
+    math_result = _try_simple_math(t)
+    if math_result is not None:
+        return math_result
 
     # Google services BEFORE generic "open X" (prevents "start google" Windows error)
     google_result = _try_google(t)
@@ -116,7 +211,6 @@ def _try_local(text: str) -> str | None:
     m = re.search(r"(?:open|launch|start|run)\s+(?:the\s+)?(.+?)(?: app| application)?$", t)
     if m:
         app = m.group(1).strip()
-        # first word or full alias match
         if app in KNOWN_APPS:
             return TOOL_EXECUTORS["open_application"](app_name=app)
         first = app.split()[0]

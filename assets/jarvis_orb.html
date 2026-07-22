@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>JARVIS Orb</title>
+<style>
+    html, body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        overflow: hidden;
+    }
+    #hud {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    #orb {
+        width: 96%;
+        height: 96%;
+        overflow: visible;
+        transform-origin: 50% 50%;
+        transition: transform 0.2s ease-out;
+    }
+    .ambient {
+        fill: url(#ambientGlow);
+        opacity: 0.55;
+    }
+    .core-outer {
+        fill: #1D9E75;
+        opacity: 0.55;
+        filter: url(#softGlow);
+    }
+    .core {
+        fill: #7EE8CF;
+        stroke: #5DCAA5;
+        stroke-width: 1.2;
+        filter: url(#coreGlow);
+    }
+    .particle {
+        fill: #5DCAA5;
+    }
+</style>
+</head>
+<body>
+<div id="hud">
+    <!--
+      Two particle rings + core.
+      Rings spin IN PLACE around (50,50) via SVG rotate(angle, 50, 50)
+      — they do NOT orbit / revolve around the core.
+    -->
+    <svg id="orb" class="state-idle" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+            <radialGradient id="ambientGlow" cx="50%" cy="50%" r="50%">
+                <stop offset="0%"   stop-color="#5DCAA5" stop-opacity="0.55"/>
+                <stop offset="55%"  stop-color="#1D9E75" stop-opacity="0.18"/>
+                <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+            </radialGradient>
+            <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur stdDeviation="2.5" result="b"/>
+                <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <filter id="coreGlow" x="-80%" y="-80%" width="260%" height="260%">
+                <feGaussianBlur stdDeviation="2.2" result="b"/>
+                <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <filter id="ringGlow" x="-40%" y="-40%" width="180%" height="180%">
+                <feGaussianBlur stdDeviation="0.55" result="b"/>
+                <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+        </defs>
+
+        <!-- Soft background glow (does not rotate) -->
+        <circle class="ambient" cx="50" cy="50" r="48"/>
+
+        <!-- Outer particle ring — spins in place around center -->
+        <g id="ringOuter" filter="url(#ringGlow)"></g>
+        <!-- Inner particle ring — spins opposite direction, same center -->
+        <g id="ringInner" filter="url(#ringGlow)"></g>
+
+        <!-- Core (fixed, may pulse when speaking) -->
+        <circle class="core-outer" cx="50" cy="50" r="9"/>
+        <circle id="core" class="core" cx="50" cy="50" r="5.5"/>
+    </svg>
+</div>
+
+<script>
+(function () {
+    var orb = document.getElementById('orb');
+    var ringOuter = document.getElementById('ringOuter');
+    var ringInner = document.getElementById('ringInner');
+    var core = document.getElementById('core');
+
+    var state = 'idle';
+    var angleOuter = 0;
+    var angleInner = 0;
+    var corePulse = 0;
+    var last = performance.now();
+
+    // Speeds in degrees/second — idle slow, speaking fast
+    var SPEEDS = {
+        idle:     { outer:  18, inner: -24, pulse: 0 },
+        speaking: { outer:  70, inner: -95, pulse: 1 }
+    };
+
+    function buildRing(group, radius, count, color, size) {
+        group.innerHTML = '';
+        // Two interleaved wavy particle bands so it looks like the ribbon rings
+        for (var band = 0; band < 2; band++) {
+            var rBase = radius + (band === 0 ? -1.1 : 1.1);
+            for (var i = 0; i < count; i++) {
+                var t = (i / count) * Math.PI * 2;
+                // slight wave so rings look organic, not a flat circle
+                var wave = Math.sin(t * 6 + band * 1.4) * 1.35
+                         + Math.sin(t * 11 + band) * 0.55;
+                var r = rBase + wave;
+                var x = 50 + Math.cos(t) * r;
+                var y = 50 + Math.sin(t) * r;
+                var c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                c.setAttribute('cx', x.toFixed(2));
+                c.setAttribute('cy', y.toFixed(2));
+                // Vary size for particle density look
+                var s = size * (0.55 + (i % 5) * 0.12);
+                c.setAttribute('r', s.toFixed(2));
+                c.setAttribute('fill', color);
+                // High opacity — less transparent
+                var op = 0.72 + (i % 7) * 0.04;
+                c.setAttribute('opacity', Math.min(1, op).toFixed(2));
+                group.appendChild(c);
+            }
+        }
+    }
+
+    // Match reference: two concentric particle rings around a bright core
+    buildRing(ringOuter, 36, 96, '#5DCAA5', 0.85);
+    buildRing(ringInner, 27, 78, '#3ECFB0', 0.75);
+
+    function tick(now) {
+        var dt = Math.min(0.05, (now - last) / 1000);
+        last = now;
+        var spd = SPEEDS[state] || SPEEDS.idle;
+
+        // CRITICAL: rotate(angle, 50, 50) = spin in place around the core.
+        // Never use CSS transform without an explicit center — that causes orbiting.
+        angleOuter = (angleOuter + spd.outer * dt) % 360;
+        angleInner = (angleInner + spd.inner * dt) % 360;
+        ringOuter.setAttribute('transform', 'rotate(' + angleOuter.toFixed(2) + ' 50 50)');
+        ringInner.setAttribute('transform', 'rotate(' + angleInner.toFixed(2) + ' 50 50)');
+
+        if (spd.pulse) {
+            corePulse += dt * 5.5;
+            var s = 1 + Math.sin(corePulse) * 0.18;
+            var o = 0.85 + Math.sin(corePulse) * 0.15;
+            core.setAttribute('transform', 'rotate(0 50 50) translate(50 50) scale(' + s.toFixed(3) + ') translate(-50 -50)');
+            core.setAttribute('opacity', o.toFixed(2));
+        } else {
+            core.removeAttribute('transform');
+            core.setAttribute('opacity', '1');
+        }
+
+        requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+
+    window.setState = function (s) {
+        s = String(s || 'idle').toLowerCase().replace(/^state-/, '');
+        if (s !== 'speaking' && s !== 'idle') s = 'idle';
+        state = s;
+        orb.setAttribute('class', 'state-' + s);
+    };
+
+    window.setScale = function (scale) {
+        var n = Number(scale);
+        if (!isFinite(n) || n <= 0) n = 1;
+        orb.style.transform = 'scale(' + n + ')';
+    };
+
+    window.setState('idle');
+    window.setScale(1.0);
+})();
+</script>
+</body>
+</html>
