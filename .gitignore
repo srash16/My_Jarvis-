@@ -27,8 +27,9 @@ jarvis_speaking.flag
 widget_position.json
 .streamlit/
 
-# JARVIS screenshots
+# JARVIS screenshots (encrypted .png.enc + any legacy plaintext .png)
 .jarvis_screenshots/
+
 
 # OS files
 .DS_Store

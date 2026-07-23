@@ -46,3 +46,6 @@ VISION_ENABLED = os.getenv("JARVIS_VISION_ENABLED", "true").lower() == "true"
 # so those calls draw from a separate free-tier quota bucket.
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_LITE_MODEL = os.getenv("GEMINI_LITE_MODEL", "gemini-2.5-flash-lite")
+
+# How long encrypted screenshots are kept under ~/.jarvis_screenshots/
+SCREENSHOT_RETENTION_HOURS = int(os.getenv("JARVIS_SCREENSHOT_RETENTION_HOURS", "24"))

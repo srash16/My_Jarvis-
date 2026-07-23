@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 import webbrowser
 from datetime import datetime
 from pathlib import Path
@@ -19,7 +20,12 @@ import pyautogui
 import pygetwindow as gw
 from pycaw.pycaw import AudioUtilities
 
-from system_config import CHROME_NICKNAMES, CUSTOM_APPS, POWER_DELAY_SECONDS
+from system_config import (
+    CHROME_NICKNAMES,
+    CUSTOM_APPS,
+    POWER_DELAY_SECONDS,
+    SCREENSHOT_RETENTION_HOURS,
+)
 
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE = 0.15
@@ -27,6 +33,27 @@ pyautogui.PAUSE = 0.15
 CHROME_USER_DATA = Path(os.environ.get("LOCALAPPDATA", "")) / "Google/Chrome/User Data"
 SCREENSHOT_DIR = Path.home() / ".jarvis_screenshots"
 _gemini_client = None
+
+# Editable: if the active window title contains any of these (case-insensitive),
+# see_screen requires confirmed=True before capturing.
+SENSITIVE_WINDOW_KEYWORDS = (
+    # Password managers
+    "1password",
+    "bitwarden",
+    "lastpass",
+    "keepass",
+    "keeper",
+    "dashlane",
+    "nordpass",
+    # Banking / finance
+    "bank",
+    "banking",
+    "paypal",
+    "venmo",
+    "wise",
+    "stripe",
+    # Mail compose (combined with a mail client name below)
+)
 
 APP_ALIASES = {
     "chrome": "chrome",
@@ -402,36 +429,130 @@ def move_file(source: str, destination: str, confirmed: bool = False) -> str:
         return f"Could not move file: {e}"
 
 
-def see_screen(question: str = "Describe what is visible on the screen in detail.") -> str:
+def _active_window_title() -> str:
+    try:
+        win = gw.getActiveWindow()
+        return (win.title or "").strip() if win else ""
+    except Exception:
+        return ""
+
+
+def _match_sensitive_window(title: str) -> str | None:
+    """Return a short label if the window title looks high-risk, else None."""
+    if not title:
+        return None
+    lower = title.lower()
+
+    for kw in SENSITIVE_WINDOW_KEYWORDS:
+        if kw in lower:
+            return kw
+
+    # Email compose: "New Message" / "Compose" with a known mail client
+    compose = ("new message" in lower) or ("compose" in lower)
+    mail_client = any(
+        m in lower
+        for m in ("gmail", "outlook", "mail", "thunderbird", "yahoo mail", "proton")
+    )
+    if compose and mail_client:
+        return "email compose"
+
+    return None
+
+
+def _cleanup_old_screenshots() -> None:
+    """Delete screenshots older than SCREENSHOT_RETENTION_HOURS (fail-silent)."""
+    if not SCREENSHOT_DIR.exists():
+        return
+    cutoff = time.time() - (SCREENSHOT_RETENTION_HOURS * 3600)
+    for path in SCREENSHOT_DIR.iterdir():
+        try:
+            if not path.is_file():
+                continue
+            name = path.name.lower()
+            # Encrypted copies + leftover plaintext .png from before this change
+            if not (name.endswith(".png.enc") or name.endswith(".png")):
+                continue
+            if path.stat().st_mtime < cutoff:
+                path.unlink(missing_ok=True)
+        except Exception as e:
+            print(f"[Screen] cleanup skipped {path.name}: {e}")
+
+
+def decrypt_screenshot_file(path: str | Path) -> bytes:
+    """
+    Decrypt a .png.enc screenshot back to viewable PNG bytes.
+    Uses the same JARVIS_DB_KEY / Fernet key as memory encryption.
+    """
+    from memory_crypto import decrypt_bytes
+
+    p = Path(path)
+    raw = p.read_bytes()
+    return decrypt_bytes(raw)
+
+
+def see_screen(
+    question: str = "Describe what is visible on the screen in detail.",
+    confirmed: bool = False,
+) -> str:
     """Capture a screenshot and analyze it with vision AI.
+
+    Normally runs with no confirmation. If the active window looks sensitive
+    (password manager, banking, email compose), REQUIRES confirmed=True after
+    the user verbally confirms.
+
+    Local copies are Fernet-encrypted (.png.enc) using JARVIS_DB_KEY.
+    In-memory PNG bytes sent to Gemini are not encrypted.
 
     Args:
         question: What to look for on screen, e.g. "what error is shown?" or
             "what application is open?".
+        confirmed: Must be True only after explicit user confirmation when the
+            active window matches a high-risk pattern.
 
     Returns:
         A description of what's on screen.
     """
+    title = _active_window_title()
+    matched = _match_sensitive_window(title)
+    if matched:
+        msg = _require_confirmation(
+            "capture screen",
+            f"active window looks like '{matched}' ({title[:80]}) which may contain sensitive info",
+            confirmed,
+        )
+        if msg:
+            return msg
+
     if _gemini_client is None:
         return "Screen vision is not initialized."
 
     from google.genai import types
+    from memory_crypto import encrypt_bytes
 
+    _cleanup_old_screenshots()
     SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    screenshot_path = SCREENSHOT_DIR / f"screen_{timestamp}.png"
+    screenshot_path = SCREENSHOT_DIR / f"screen_{timestamp}.png.enc"
 
     try:
         img = pyautogui.screenshot()
-        img.save(screenshot_path)
 
+        # Plain PNG in memory for Gemini (unchanged API path)
         buf = io.BytesIO()
         img.save(buf, format="PNG")
+        png_bytes = buf.getvalue()
+
+        # Encrypted at rest
+        try:
+            screenshot_path.write_bytes(encrypt_bytes(png_bytes))
+        except Exception as e:
+            print(f"[Screen] could not encrypt/save screenshot: {e}")
+
         response = _gemini_client.models.generate_content(
             model="gemini-2.5-flash",
             contents=[types.Content(role="user", parts=[
                 types.Part.from_text(text=question),
-                types.Part.from_bytes(data=buf.getvalue(), mime_type="image/png"),
+                types.Part.from_bytes(data=png_bytes, mime_type="image/png"),
             ])],
         )
         return response.text or "I couldn't analyze the screen."
@@ -736,11 +857,15 @@ SYSTEM_CONTROL_PROMPT = (
     "from .env (e.g. 'work'). Use list_chrome_profiles to see accounts. "
     "open_chrome with a URL REQUIRES confirmed=True after verbal confirmation; "
     "opening a profile with no URL does not.\n"
-    "Screen vision: see_screen(question=...) to analyze what's on screen.\n"
+    "Screen vision: see_screen(question=...) to analyze what's on screen. "
+    "Normally no confirmation is needed. If the active window looks sensitive "
+    "(password manager, banking, email compose), see_screen REQUIRES confirmed=True "
+    "after the user verbally confirms — first call may return CONFIRMATION REQUIRED; "
+    "then call again with confirmed=True.\n"
     "Volume/brightness: set_volume, mute_volume, set_brightness, get_volume.\n"
     "Power: lock_computer, sleep_computer, shutdown_computer(restart=True/False).\n"
     "GATED actions (delete_file, move_file overwrite, shutdown/restart, "
-    "click_screen, type_text, open_chrome with a URL) "
+    "click_screen, type_text, open_chrome with a URL, and see_screen on sensitive windows) "
     "REQUIRE confirmed=True ONLY after the user explicitly says yes/confirm. "
     "First call with confirmed=False to ask; second call with confirmed=True to execute.\n"
     "cancel_shutdown aborts a pending shutdown."

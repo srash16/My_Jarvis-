@@ -94,3 +94,23 @@ def decrypt_text(value: str, fernet: Fernet | None = None) -> str:
             "Could not decrypt memory data with JARVIS_DB_KEY. "
             "Check that .env has the same key used when the data was encrypted."
         ) from e
+
+
+def encrypt_bytes(data: bytes, fernet: Fernet | None = None) -> bytes:
+    """Encrypt raw bytes (e.g. PNG) with the same JARVIS_DB_KEY Fernet key."""
+    if not data:
+        return b""
+    f = fernet or get_fernet()
+    return f.encrypt(data)
+
+
+def decrypt_bytes(token: bytes, fernet: Fernet | None = None) -> bytes:
+    """Decrypt Fernet token bytes back to plaintext (e.g. PNG)."""
+    f = fernet or get_fernet()
+    try:
+        return f.decrypt(token)
+    except InvalidToken as e:
+        raise ValueError(
+            "Could not decrypt file with JARVIS_DB_KEY. "
+            "Wrong key or corrupt ciphertext."
+        ) from e
